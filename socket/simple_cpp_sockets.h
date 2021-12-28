@@ -4,13 +4,28 @@
 #include <string>
 #include <iostream>
 #include <exception>
+#include <thread>
+#include <string.h>
 
+// Windows
+#if defined(_WIN32)
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#include <winsock2.h>
+#include <Ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+typedef SSIZE_T ssize_t;
+
+// Linux
+#else
 #include <sys/socket.h>
+#include <sys/types.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h> // This contains inet_addr
 #include <unistd.h> // This contains close
 #define INVALID_SOCKET (SOCKET)(~0)
 #define SOCKET_ERROR (-1)
 typedef int SOCKET;
+#endif
 
 // These could also be enums
 struct bind_err : public std::exception { };
@@ -24,7 +39,13 @@ class Socket {
 public:
     std::string recv();
     void send(const std::string&);
-    ~Socket() { close(m_socket); }
+    ~Socket() {
+#ifdef WIN32
+        closesocket(m_socket);
+#else        
+        close(m_socket);
+#endif
+    }
     Socket& operator=(const Socket& s) {
         m_socket = s.m_socket;
         m_addr   = s.m_addr;
@@ -45,11 +66,55 @@ public:
     int set_address(const std::string& ip_address) { return inet_pton(AF_INET, ip_address.c_str(), &m_addr.sin_addr); }
     explicit Socket(SocketType socket_type = SocketType::TYPE_DGRAM);
     Socket accept();
+    std::string format() const {
+        return ipname(m_addr) + ":" + std::to_string(ntohs(m_addr.sin_port));
+    }
+    std::string getpeername() const {
+        sockaddr_in addr;
+        socklen_t len = sizeof(addr);
+        ::getpeername(m_socket, reinterpret_cast<struct sockaddr *>(&addr), &len);
+        return ipname(addr);
+    }
+    u_short getpeerport() const {
+        sockaddr_in addr;
+        socklen_t len = sizeof(addr);
+        ::getpeername(m_socket, reinterpret_cast<struct sockaddr *>(&addr), &len);
+        return ntohs(addr.sin_port);
+    }
+    static void initSockets() {
+#ifdef WIN32
+    // Initialize the WSDATA if no socket instance exists
+    if (!s_count) {
+        WSADATA wsa;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+            throw std::runtime_error("Error initializing Winsock " + WSAGetLastError());
+        }
+    }
+    #endif        
+}
 protected:
-    explicit Socket(SOCKET socket, sockaddr_in addr) : m_socket(socket), m_addr(addr) {}
+    std::string ipname(const sockaddr_in &addr) const {
+        char tmp[100];
+        return std::string(inet_ntop(AF_INET, &addr.sin_addr, tmp, sizeof(tmp)));
+    }
+    explicit Socket(SOCKET socket, sockaddr_in addr) : m_socket(socket), m_addr(addr) {
+        int i = 1;
+        if (setsockopt( m_socket, IPPROTO_TCP, TCP_NODELAY, (void *)&i, sizeof(i))) {
+            throw std::runtime_error("Can't set no-delay");
+        }
+    }
     SOCKET m_socket;
     sockaddr_in m_addr;
+#ifdef WIN32
+    // Number of sockets is tracked to call WSACleanup on Windows
+    static int s_count;
+#endif
 };
+
+#ifdef WIN32
+// Initialize s_count on windows
+int Socket::s_count{ 0 };
+#endif
 
 class TCPClient : public Socket
 {
@@ -109,10 +174,13 @@ TCPServer::TCPServer(u_short port, const std::string& ip_address) : m_listen(Soc
 };
 
 void Socket::bind() {
+    std::cout << "Binding to " << format() << "\n";
     if (::bind(m_socket, reinterpret_cast<sockaddr*>(&m_addr), sizeof(m_addr)) == SOCKET_ERROR) {
         throw bind_err();
     }
-    listen(m_socket, 3);
+    if (::listen(m_socket, 1)) {
+        std::cerr << "listen failure, err=" << errno << "\n";
+    }
 }
 
 Socket Socket::accept() {
@@ -121,7 +189,10 @@ Socket Socket::accept() {
     SOCKET new_socket;
     new_socket = ::accept(m_socket, reinterpret_cast<sockaddr*>(&client), &client_size);
     if (new_socket == INVALID_SOCKET) {
+        std::cout << "Accept error " << errno << ":" << strerror(errno) << " Socket:" << m_socket << "\n";
         throw accept_err();
     }
-    return Socket(new_socket, client);
+    Socket s(new_socket, client);
+    std::cout << "Accepted connection on " << new_socket << " " << s.format() << "\n";
+    return s;
 }

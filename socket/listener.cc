@@ -7,10 +7,15 @@
 
 const int port = 6379;
 
-void handle_conn(Socket& s) {
+Socket *log_socket = nullptr;
+
+void handle_conn(Socket& rcv) {
     while (true) {
-        std::string cmd = s.recv();
+        std::string cmd = rcv.recv();
         std::cout << "Got cmd: " << cmd << "\n";
+        if (log_socket) {
+            log_socket->send(cmd);
+        }
     }
 }
 
@@ -23,13 +28,18 @@ void socket_listener() {
         return;
     }
     while (true) {
-        std::cerr << "Waiting to connect\n";
-        Socket s = server.accept();
+        std::cerr << "Waiting to connect on port " << port << "\n";
+        Socket rcv = server.accept();
+        std::cerr << "Got connection from " << rcv.getpeername() << "\n";
+        TCPClient snd(port, rcv.getpeername());
+        snd.make_connection();
+        log_socket = &snd;
         try {
-            handle_conn(s);
+            handle_conn(rcv);
         } catch(recv_err) {
             std::cerr << "Receive error\n";
         }
+        log_socket = nullptr;
     }
 }
 

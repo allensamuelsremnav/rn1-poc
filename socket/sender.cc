@@ -1,37 +1,51 @@
 #include "simple_cpp_sockets.h"
+#include <SDL2/SDL.h>
 
-std::string get_user_input(std::string prompt_message)
-{
-    std::cout << prompt_message << std::endl;
-    std::string user_input;
-    getline(std::cin, user_input);
+bool running = true;
 
-    return user_input;
+float steering = 0;
+float delta = .01; // Radians
+
+void update_steering(TCPClient& client) {
+    client.send("steering " + std::to_string(steering) + "\n");
 }
 
-bool validate_input(int input)
-{
-    if (input != 1 && input != 2)
-    {
-        std::cout << "Invalid input" << std::endl;
-        return false;
-    }
 
-    return true;
+void process_data(Socket& snd) {
+    while (running) {
+        std::cout << "Sending xyz\n";
+        snd.send("XYZ\n");
+        sleep(1);
+    }
+}
+
+void listener(const std::string& cmd) {
+    std::cout << "Received echo back of : " << cmd << "\n";
+}
+
+TCPServer listenSocket(0);
+
+void listener_thread(u_short port) {
+    listenSocket = TCPServer(port+1);
+    listenSocket.bind();
+    while (running) {
+        std::cerr << "Waiting for connection on port " << port+1 << "\n";
+        Socket r = listenSocket.accept();
+        std::cerr << "Got connection from " << r.getpeername() << ":" << r.getpeerport() << "\n";
+        try {
+            while (running) {
+                listener(r.recv());
+            }
+        } catch(...) {
+        }
+    }
 }
 
 int main(int argc, char **argv) {
-    // These could also be enums
-    const int invalid_protocol_return = 1;
-    const int invalid_sockettype_return = 2;
-    const int udp_protocol = 1;
-    const int tcp_protocol = 2;
-    const int client_socket = 1;
-    const int server_socket = 2;
     std::string ip;
     int port = 6379;
 
-    if (argc < 2) {
+    if (argc < 1) {
         std::cerr << "syntax: ip-addr [port]\nport defaults to 6379\n";
         return 1;
     }
@@ -39,99 +53,21 @@ int main(int argc, char **argv) {
         ip = std::string(argv[1]);
     }
     if (argc > 2) {
-        port = std::stoi(argc[2]);
+        port = std::stoi(argv[2]);
     }
-
-    while (1) {
-        std::cout << "Connecting to " << ip << ":" << port << "\n";
-        TCPClient client(port, ip);
-        if (client.make_connection()) {
-            // Error in connection, retry
-            std::cout << "Error connecting.\n";
-        } else {
-            process_data(client);
+    std::cerr << "Connecting to " << ip << ":" << port << "\n";
+    std::thread(listener_thread, port).detach();
+    while (running) {
+        TCPClient snd(port, ip);
+        try {
+            snd.make_connection();
+            std::cerr << "Connected to " << snd.getpeername() << ":" << snd.getpeerport() << ", waiting for callback\n";
+            process_data(snd);
+        } catch(connection_err) {
+            sleep(1);
+        } catch (send_err) {
+            std::cerr << "Disconnected\n";
         }
     }
-
-    // Pick protocol
-    int socket_protocol = std::stoi(get_user_input("Please pick a protocol. 1 for UDP, 2 for TCP:"));
-
-    // Pick client or server
-    int socket_type = std::stoi(get_user_input("Please enter 1 for client or 2 for server:"));
-    if (!validate_input(socket_type))
-        return invalid_sockettype_return;
-
-    // Pick port (and destination IP address if client)
-    u_short socket_port;
-    std::string destination_ip;
-
-    // Client
-    if (socket_type == client_socket) {
-        socket_port = static_cast<u_short>(std::stoi(get_user_input("Please pick a destination port:")));
-        destination_ip = get_user_input("Please enter destination ip address (example 127.0.0.1):");
-    }
-
-    // Server
-    else
-    {
-        socket_port = static_cast<u_short>(std::stoi(get_user_input("Please enter a port on which to listen")));
-    }
-
-    // UDP Protocol
-    if (socket_protocol == udp_protocol)
-    {
-        // Client
-        if (socket_type == client_socket)
-        {
-            UDPClient client(socket_port, destination_ip);
-            client.send_message(get_user_input("Please enter your message to send") + "\n");
-        }
-        // Server
-        else if (socket_type == server_socket)
-        {
-            UDPServer server(socket_port);
-            int bind_status = server.socket_bind();
-
-            // Return if there is an issue binding
-            if (bind_status)
-            {
-                return bind_status;
-            }
-            server.listen();
-        }
-
-    }
-
-    // TCP Protocol
-    else if (socket_protocol == tcp_protocol)
-    {
-        // Client
-        if (socket_type == client_socket)
-        {
-            TCPClient client(socket_port, destination_ip);
-            int connection_status = client.make_connection();
-
-            // Return if there is an issue binding
-            if (connection_status)
-            {
-                return connection_status;
-            }
-            client.send_message(get_user_input("Please enter your message to send") + "\n");
-        }
-        // Server
-        else if (socket_type == server_socket)
-        {
-            TCPServer server(socket_port);
-            int bind_status = server.socket_bind();
-
-            // Return if there is an issue binding
-            if (bind_status)
-            {
-                return bind_status;
-            }
-        }
-    }
-
     return 0;
 }
-
