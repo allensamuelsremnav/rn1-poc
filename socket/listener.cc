@@ -14,6 +14,7 @@ void handle_conn(Socket& rcv) {
         std::string cmd = rcv.recv();
         std::cout << "Got cmd: " << cmd << "\n";
         if (log_socket) {
+            std::cout << "Resending cmd: " << cmd << "\n";
             log_socket->send(cmd);
         }
     }
@@ -31,8 +32,9 @@ void socket_listener() {
         std::cerr << "Waiting to connect on port " << port << "\n";
         Socket rcv = server.accept();
         std::cerr << "Got connection from " << rcv.getpeername() << "\n";
-        TCPClient snd(port, rcv.getpeername());
+        TCPClient snd(port+1, rcv.getpeername());
         snd.make_connection();
+        std::cerr << "Opened reverse connection\n";
         log_socket = &snd;
         try {
             handle_conn(rcv);

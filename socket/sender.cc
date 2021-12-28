@@ -12,9 +12,10 @@ void update_steering(TCPClient& client) {
 
 
 void process_data(Socket& snd) {
+    int i = 0;
     while (running) {
-        std::cout << "Sending xyz\n";
-        snd.send("XYZ\n");
+        std::cout << "Sending XYZ : " + std::to_string(i) << "\n";
+        snd.send("XYZ : " + std::to_string(i++));
         sleep(1);
     }
 }
